@@ -529,7 +529,7 @@ router.post("/enrollments", (req, res) => {
       // 3. Gửi Email với Template đẹp
       const mailOptions = {
         from: '"DUC THANG MEDIA 🚀" <email-cua-ban@gmail.com>',
-        to: "email-admin@gmail.com", // Email nhận thông báo
+        to: process.env.GMAIL_USER, // Email nhận thông báo
         subject: `🔥 ĐĂNG KÝ MỚI: ${info.full_name.toUpperCase()} - ${info.course_name}`,
         html: `
           <div style="background-color: #0b0e14; padding: 40px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #ffffff;">
