@@ -251,7 +251,7 @@ router.post("/register", (req, res) => {
               console.log("📧 Đang gửi email OTP tới:", email);
 
               await transporter.sendMail({
-                from: "Hệ thống <no-reply@gmail.com>",
+                from: "Hệ thống DUC THANG MEDIA",
                 to: email,
                 subject: "Mã xác thực OTP",
                html: `
