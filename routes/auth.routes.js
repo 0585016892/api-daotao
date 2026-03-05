@@ -189,9 +189,9 @@ router.post("/loginuser", (req, res) => {
 router.post("/register", (req, res) => {
   console.log("📥 [REGISTER] Body:", req.body);
 
-  const { name, email, password } = req.body;
+  const { name, email, password ,phone} = req.body;
 
-  if (!email || !password) {
+  if (!email || !password || !name || !phone) {
     console.log("⚠️ Thiếu thông tin");
     return res.status(400).json({ message: "Thiếu thông tin" });
   }
@@ -216,11 +216,11 @@ router.post("/register", (req, res) => {
     console.log("🔐 Password đã hash");
 
     const insertSql =
-      "INSERT INTO students (full_name, email, password, role, is_verified) VALUES (?, ?, ?, ?, ?)";
+      "INSERT INTO students (full_name, email, password, phone, role, is_verified) VALUES (?, ?, ?, ?, ?, ?)";
 
     dbPromise.query(
       insertSql,
-      [name, email, hashPassword, "student", 0],
+      [name, email, hashPassword, phone, "student", 0],
       async (err, result) => {
         if (err) {
           console.error("❌ Lỗi insert student:", err);
