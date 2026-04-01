@@ -7,14 +7,22 @@ const nodemailer = require("nodemailer");
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "tranhung6829@gmail.com", // Email gửi đi
-    pass: "ddxbqzburhpsrmdt", // Mật khẩu ứng dụng (App Password)
+    user: process.env.GMAIL_USER, // Email gửi đi
+    pass: process.env.GMAIL_PASS, // Mật khẩu ứng dụng (App Password)
   },
 });
 const router = express.Router();
 const SITE_NAME = process.env.SITE_NAME;
 
-
+async function sendOtpMail(email, otp) {
+  await transporter.sendMail({
+    from: "Hệ thống DUC THANG MEDIA",
+    to: email,
+    subject: "Mã xác thực OTP",
+    html: `<h2>Mã OTP của bạn: ${otp}</h2>
+           <p>Mã có hiệu lực trong 5 phút.</p>`
+  });
+}
 const generateOTP = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -186,131 +194,111 @@ router.post("/loginuser", (req, res) => {
 /* =======================
    REGISTER
 ======================= */
-router.post("/register", (req, res) => {
-  console.log("📥 [REGISTER] Body:", req.body);
+router.post("/register", async (req, res) => {
+  try {
+    const { name, email, password, phone } = req.body;
 
-  const { name, email, password ,phone} = req.body;
-
-  if (!email || !password || !name || !phone) {
-    console.log("⚠️ Thiếu thông tin");
-    return res.status(400).json({ message: "Thiếu thông tin" });
-  }
-
-  const checkSql = "SELECT id FROM students WHERE email = ?";
-  console.log("🔍 Check email tồn tại:", email);
-
-  dbPromise.query(checkSql, [email], async (err, rows) => {
-    if (err) {
-      console.error("❌ Lỗi check email:", err);
-      return res.status(500).json({ message: "Lỗi server" });
+    // 1️⃣ Validate dữ liệu
+    if (!name || !email || !password || !phone) {
+      return res.status(400).json({ message: "Thiếu thông tin" });
     }
 
-    if (rows.length > 0) {
-      console.log("⛔ Email đã tồn tại:", email);
-      return res.status(409).json({ message: "Email đã tồn tại" });
+    if (!/^0[1-9][0-9]{8}$/.test(phone)) {
+      return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
     }
 
-    console.log("✅ Email hợp lệ, tiến hành tạo tài khoản");
+    if (password.length < 6) {
+      return res.status(400).json({ message: "Mật khẩu tối thiểu 6 ký tự" });
+    }
 
-    const hashPassword = await bcrypt.hash(password, 10);
-    console.log("🔐 Password đã hash");
-
-    const insertSql =
-      "INSERT INTO students (full_name, email, password, phone, role, is_verified) VALUES (?, ?, ?, ?, ?, ?)";
-
+    // 2️⃣ Check email tồn tại
     dbPromise.query(
-      insertSql,
-      [name, email, hashPassword, phone, "student", 0],
-      async (err, result) => {
-        if (err) {
-          console.error("❌ Lỗi insert student:", err);
-          return res.status(500).json({ message: "Lỗi server" });
+      "SELECT * FROM students WHERE email = ?",
+      [email],
+      async (err, rows) => {
+        if (err) return res.status(500).json({ message: "Lỗi server" });
+
+        // ===============================
+        // 🚫 EMAIL ĐÃ TỒN TẠI
+        // ===============================
+        if (rows.length > 0) {
+          const user = rows[0];
+
+          // 👉 Nếu đã verify rồi
+          if (user.is_verified === 1) {
+            return res.status(409).json({
+              message: "Email đã được sử dụng",
+              type: "EMAIL_EXISTS"
+            });
+          }
+
+          // 👉 Nếu chưa verify → resend OTP
+          const otp = generateOTP();
+
+          // Xoá OTP cũ
+          dbPromise.query(
+            "DELETE FROM email_otps WHERE student_id = ?",
+            [user.id]
+          );
+
+          // Tạo OTP mới
+          dbPromise.query(
+            "INSERT INTO email_otps (student_id, otp, expired_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))",
+            [user.id, otp],
+            async (err) => {
+              if (err) return res.status(500).json({ message: "Lỗi OTP" });
+
+              await sendOtpMail(email, otp);
+
+              return res.json({
+                message: "Email chưa xác thực. OTP đã được gửi lại.",
+                student_id: user.id,
+                type: "RESEND_OTP"
+              });
+            }
+          );
+
+          return;
         }
 
-        console.log("✅ Tạo student thành công, ID:", result.insertId);
+        // ===============================
+        // ✅ EMAIL CHƯA TỒN TẠI → TẠO MỚI
+        // ===============================
 
-        // 🔐 TẠO OTP
-        const otp = generateOTP();
-        console.log("🔑 OTP sinh ra:", otp);
-
-        const otpSql =
-          "INSERT INTO email_otps (student_id, otp, expired_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))";
+        const hashPassword = await bcrypt.hash(password, 10);
 
         dbPromise.query(
-          otpSql,
-          [result.insertId, otp],
-          async (err) => {
-            if (err) {
-              console.error("❌ Lỗi lưu OTP:", err);
-              return res.status(500).json({ message: "Lỗi lưu OTP" });
-            }
+          "INSERT INTO students (full_name, email, password, phone, role, is_verified) VALUES (?, ?, ?, ?, ?, 0)",
+          [name, email, hashPassword, phone, "student"],
+          async (err, result) => {
+            if (err) return res.status(500).json({ message: "Lỗi tạo user" });
 
-            console.log("✅ Lưu OTP thành công cho student:", result.insertId);
+            const otp = generateOTP();
 
-            try {
-              console.log("📧 Đang gửi email OTP tới:", email);
+            dbPromise.query(
+              "INSERT INTO email_otps (student_id, otp, expired_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))",
+              [result.insertId, otp],
+              async (err) => {
+                if (err) return res.status(500).json({ message: "Lỗi OTP" });
 
-              await transporter.sendMail({
-                from: "Hệ thống DUC THANG MEDIA",
-                to: email,
-                subject: "Mã xác thực OTP",
-               html: `
-                  <div style="background-color: #f9fafb; padding: 40px 10px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-                    <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;">
-                      
-                      <div style="background-color: #1d4ed8; padding: 30px; text-align: center;">
-                        <h2 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0.5px;">Xác Thực Tài Khoản</h2>
-                      </div>
+                await sendOtpMail(email, otp);
 
-                      <div style="padding: 40px 30px; text-align: center;">
-                        <p style="color: #4b5563; font-size: 16px; margin-bottom: 25px; line-height: 1.5;">
-                          Chào bạn, vui lòng sử dụng mã xác thực dưới đây để hoàn tất quy trình:
-                        </p>
-
-                        <div style="background-color: #f3f4f6; border-radius: 12px; padding: 20px; margin-bottom: 25px; border: 1px solid #e5e7eb;">
-                          <h1 style="margin: 0; font-size: 42px; font-weight: 800; letter-spacing: 12px; color: #111827; font-family: 'Courier New', Courier, monospace;">
-                            ${otp}
-                          </h1>
-                        </div>
-
-                        <p style="color: #ef4444; font-size: 14px; font-weight: 500; margin-bottom: 5px;">
-                          ⏱️ Mã này sẽ hết hiệu lực sau 5 phút.
-                        </p>
-                        <p style="color: #9ca3af; font-size: 13px;">
-                          Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email.
-                        </p>
-                      </div>
-
-                      <div style="padding: 20px; background-color: #f9fafb; text-align: center; border-top: 1px solid #e5e7eb;">
-                        <p style="color: #9ca3af; font-size: 12px; margin: 0;">
-                          ©${new Date().getFullYear()} ${SITE_NAME}. All rights reserved.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  `
-              });
-
-              console.log("✅ Gửi email OTP thành công");
-
-              res.json({
-                message:
-                  "Đăng ký thành công, vui lòng kiểm tra email để nhập OTP",
-                student_id: result.insertId,
-              });
-            } catch (mailErr) {
-              console.error("❌ Lỗi gửi mail:", mailErr);
-              return res
-                .status(500)
-                .json({ message: "Không gửi được email OTP" });
-            }
+                return res.json({
+                  message: "Đăng ký thành công. OTP đã gửi.",
+                  student_id: result.insertId,
+                  type: "REGISTER_SUCCESS"
+                });
+              }
+            );
           }
         );
       }
     );
-  });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
 });
-
 router.post("/verify-otp", (req, res) => {
   console.log("📥 [VERIFY OTP] Body:", req.body);
 
