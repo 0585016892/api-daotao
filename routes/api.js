@@ -73,7 +73,7 @@ router.post("/students", (req, res) => {
     [student_code, full_name, gender, phone, email, address ,date_of_birth],
     (err) => {
       if (err) return res.status(500).json(err);
-      res.json({ message: "✅ Thêm học viên thành công" });
+      res.json({ message: "Thêm học viên thành công" });
     }
   );
 });
@@ -134,7 +134,7 @@ router.put("/students/:id", (req, res) => {
       return res.status(404).json({ message: "Không tìm thấy học viên" });
     }
 
-    res.json({ message: "✅ Cập nhật học viên thành công" });
+    res.json({ message: "Cập nhật học viên thành công" });
   });
 });
 // Tìm kiếm học viên
@@ -194,11 +194,11 @@ router.put("/students/:id/change-password", (req, res) => {
   const studentId = req.params.id;
 
   if (!old_password || !new_password || !confirm_password) {
-    return res.status(400).json({ message: "❌ Thiếu dữ liệu" });
+    return res.status(400).json({ message: "Thiếu dữ liệu" });
   }
 
   if (new_password !== confirm_password) {
-    return res.status(400).json({ message: "❌ Mật khẩu xác nhận không khớp" });
+    return res.status(400).json({ message: "Mật khẩu xác nhận không khớp" });
   }
 
   // 1️⃣ Lấy mật khẩu hiện tại
@@ -208,7 +208,7 @@ router.put("/students/:id/change-password", (req, res) => {
     async (err, results) => {
       if (err) return res.status(500).json(err);
       if (results.length === 0) {
-        return res.status(404).json({ message: "❌ Không tìm thấy học viên" });
+        return res.status(404).json({ message: "Không tìm thấy học viên" });
       }
 
       const currentHashedPassword = results[0].password;
@@ -220,7 +220,7 @@ router.put("/students/:id/change-password", (req, res) => {
       );
 
       if (!isMatch) {
-        return res.status(400).json({ message: "❌ Mật khẩu cũ không đúng" });
+        return res.status(400).json({ message: "Mật khẩu cũ không đúng" });
       }
 
       // 3️⃣ Hash mật khẩu mới
@@ -232,7 +232,7 @@ router.put("/students/:id/change-password", (req, res) => {
         [hashedPassword, studentId],
         (err) => {
           if (err) return res.status(500).json(err);
-          res.json({ message: "✅ Đổi mật khẩu thành công" });
+          res.json({ message: "Đổi mật khẩu thành công" });
         }
       );
     }
@@ -354,15 +354,24 @@ router.post(
       ],
       (err) => {
         if (err) {
+          // 🔴 Nếu trùng course_code
+          if (err.code === "ER_DUP_ENTRY") {
+            return res.status(400).json({
+              message: "Mã khóa học đã tồn tại",
+            });
+          }
+
           console.error(err);
-          return res.status(500).json(err);
+          return res.status(500).json({
+            message: "Lỗi server",
+          });
         }
-        res.json({ message: "✅ Thêm khóa học thành công" });
+
+        res.json({ message: "Thêm khóa học thành công" });
       }
     );
   }
 );
-
 // Cập nhật khóa học
 router.put(
   "/courses/:id",
@@ -438,7 +447,7 @@ router.put(
           console.error("UPDATE COURSE ERROR:", updateErr);
           return res.status(500).json(updateErr);
         }
-        res.json({ message: "✅ Cập nhật khóa học thành công", image: newImage || oldImage });
+        res.json({ message: "Cập nhật khóa học thành công", image: newImage || oldImage });
       });
     });
   }
@@ -491,7 +500,32 @@ router.get("/courses/:id", (req, res) => {
     res.json(results[0]);
   });
 });
+// DELETE course
+router.delete("/courses/:id", (req, res) => {
+  const { id } = req.params;
 
+  const sql = "DELETE FROM courses WHERE id = ?";
+
+  db.query(sql, [id], (err, result) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({
+        message: "Lỗi server",
+      });
+    }
+
+    // Nếu không tìm thấy id
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        message: "❌ Không tìm thấy khóa học",
+      });
+    }
+
+    res.json({
+      message: "✅ Xóa khóa học thành công",
+    });
+  });
+});
 /* =========================
    ĐĂNG KÝ KHÓA HỌC
 ========================= */
@@ -571,7 +605,7 @@ router.post("/enrollments", (req, res) => {
 
       transporter.sendMail(mailOptions, (mailErr) => {
         if (mailErr) console.error("Lỗi gửi mail:", mailErr);
-        else console.log("✅ Đã gửi mail thông báo cho Admin");
+        else console.log("Đã gửi mail thông báo cho Admin");
       });
 
       res.json({ message: "Đăng ký khóa học thành công" });
