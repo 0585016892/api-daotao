@@ -3,7 +3,17 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const dbPromise = require("../mysql/db");
 const nodemailer = require("nodemailer");
+const rateLimit = require("express-rate-limit");
 
+// ✅ TẠO LIMITER Ở ĐÂY
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 phút
+  max: 10, // tối đa 10 request
+  keyGenerator: (req) => req.ip + (req.body.email || ""),
+  message: {
+    message: "Bạn gửi yêu cầu quá nhiều lần. Vui lòng thử lại sau."
+  }
+});
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -19,8 +29,57 @@ async function sendOtpMail(email, otp) {
     from: "Hệ thống DUC THANG MEDIA",
     to: email,
     subject: "Mã xác thực OTP",
-    html: `<h2>Mã OTP của bạn: ${otp}</h2>
-           <p>Mã có hiệu lực trong 5 phút.</p>`
+    html: `
+<div style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 40px 0;">
+  <div style="max-width: 500px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.08);">
+    
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #4f46e5, #3b82f6); padding: 20px; text-align: center;">
+      <h1 style="color: #ffffff; margin: 0; font-size: 20px;">
+        Xác thực tài khoản
+      </h1>
+    </div>
+
+    <!-- Body -->
+    <div style="padding: 30px; text-align: center;">
+      <p style="font-size: 15px; color: #555;">
+        Đức Thắng Media, Xin chào!<br/>
+        Cảm ơn bạn đã đăng ký tài khoản.
+      </p>
+
+      <p style="font-size: 14px; color: #777;">
+        Vui lòng sử dụng mã OTP bên dưới để xác thực email của bạn:
+      </p>
+
+      <!-- OTP Box -->
+      <div style="
+        margin: 25px 0;
+        padding: 15px 0;
+        font-size: 28px;
+        letter-spacing: 8px;
+        font-weight: bold;
+        color: #4f46e5;
+        background: #f1f5ff;
+        border-radius: 8px;
+      ">
+        ${otp}
+      </div>
+
+      <p style="font-size: 13px; color: #999;">
+        ⏳ Mã có hiệu lực trong <strong>1 phút</strong>.<br/>
+        Không chia sẻ mã này cho bất kỳ ai.
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="background: #f9fafb; padding: 15px; text-align: center; font-size: 12px; color: #aaa;">
+      © ${new Date().getFullYear()} Hệ thống quản lý đào tạo<br/>
+      Đây là email tự động, vui lòng không trả lời.
+    </div>
+
+  </div>
+</div>
+`
   });
 }
 const generateOTP = () =>
@@ -120,7 +179,7 @@ router.post("/loginuser", (req, res) => {
 
             dbPromise.query(
               `INSERT INTO email_otps (student_id, otp, expired_at)
-               VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))`,
+               VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 MINUTE))`,
               [user.id, otp],
               async (err) => {
                 if (err)
@@ -194,37 +253,38 @@ router.post("/loginuser", (req, res) => {
 /* =======================
    REGISTER
 ======================= */
-router.post("/register", async (req, res) => {
+
+router.post("/register", registerLimiter, async (req, res) => {
   try {
     const { name, email, password, phone } = req.body;
 
-    // 1️⃣ Validate dữ liệu
-    if (!name || !email || !password || !phone) {
+    // ================= VALIDATE =================
+    if (!name || !email || !password || !phone)
       return res.status(400).json({ message: "Thiếu thông tin" });
-    }
 
-    if (!/^0[1-9][0-9]{8}$/.test(phone)) {
-      return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
-    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email))
+      return res.status(400).json({ message: "Email không hợp lệ" });
 
-    if (password.length < 6) {
+    if (!/^0[1-9][0-9]{8}$/.test(phone))
+      return res.status(400).json({ message: "SĐT không hợp lệ" });
+
+    if (password.length < 6)
       return res.status(400).json({ message: "Mật khẩu tối thiểu 6 ký tự" });
-    }
 
-    // 2️⃣ Check email tồn tại
+    // ================= CHECK EMAIL =================
     dbPromise.query(
       "SELECT * FROM students WHERE email = ?",
       [email],
-      async (err, rows) => {
+      async (err, users) => {
         if (err) return res.status(500).json({ message: "Lỗi server" });
 
-        // ===============================
-        // 🚫 EMAIL ĐÃ TỒN TẠI
-        // ===============================
-        if (rows.length > 0) {
-          const user = rows[0];
+        let studentId;
 
-          // 👉 Nếu đã verify rồi
+        // ================= EMAIL ĐÃ TỒN TẠI =================
+        if (users.length > 0) {
+          const user = users[0];
+
           if (user.is_verified === 1) {
             return res.status(409).json({
               message: "Email đã được sử dụng",
@@ -232,146 +292,184 @@ router.post("/register", async (req, res) => {
             });
           }
 
-          // 👉 Nếu chưa verify → resend OTP
-          const otp = generateOTP();
+          studentId = user.id;
 
-          // Xoá OTP cũ
           dbPromise.query(
-            "DELETE FROM email_otps WHERE student_id = ?",
-            [user.id]
-          );
-
-          // Tạo OTP mới
-          dbPromise.query(
-            "INSERT INTO email_otps (student_id, otp, expired_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))",
-            [user.id, otp],
-            async (err) => {
+            "SELECT * FROM email_otps WHERE student_id = ? ORDER BY created_at DESC LIMIT 1",
+            [studentId],
+            async (err, lastOtpRows) => {
               if (err) return res.status(500).json({ message: "Lỗi OTP" });
 
-              await sendOtpMail(email, otp);
+              if (lastOtpRows.length > 0) {
+                const lastOtp = lastOtpRows[0];
 
-              return res.json({
-                message: "Email chưa xác thực. OTP đã được gửi lại.",
-                student_id: user.id,
-                type: "RESEND_OTP"
-              });
+                // 🔴 Nếu bị block
+                if (
+                  lastOtp.blocked_until &&
+                  new Date(lastOtp.blocked_until) > new Date()
+                ) {
+                  return res.status(429).json({
+                    message:
+                      "Bạn đã gửi OTP quá nhiều lần. Thử lại sau 10 phút."
+                  });
+                }
+
+                const secondsPassed =
+                  (Date.now() -
+                    new Date(lastOtp.created_at).getTime()) /
+                  1000;
+
+                if (secondsPassed < 30) {
+                  return res.status(429).json({
+                    message:
+                      "Vui lòng đợi 30 giây trước khi gửi lại OTP"
+                  });
+                }
+
+                if (lastOtp.resend_count >= 5) {
+                  dbPromise.query(
+                    "UPDATE email_otps SET blocked_until = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE id = ?",
+                    [lastOtp.id]
+                  );
+
+                  return res.status(429).json({
+                    message:
+                      "Bạn đã gửi OTP quá nhiều lần. Bị khóa 10 phút."
+                  });
+                }
+              }
+
+              createAndSendOtp(studentId, email, res, "RESEND_OTP");
             }
           );
+        } 
+        // ================= EMAIL CHƯA TỒN TẠI =================
+        else {
+          const hashPassword = await bcrypt.hash(password, 10);
 
-          return;
+          dbPromise.query(
+            `INSERT INTO students 
+             (full_name, email, password, phone, role, is_verified)
+             VALUES (?, ?, ?, ?, ?, 0)`,
+            [name, email, hashPassword, phone, "student"],
+            (err, result) => {
+              if (err)
+                return res.status(500).json({ message: "Lỗi tạo user" });
+
+              studentId = result.insertId;
+
+              createAndSendOtp(
+                studentId,
+                email,
+                res,
+                "REGISTER_SUCCESS"
+              );
+            }
+          );
         }
-
-        // ===============================
-        // ✅ EMAIL CHƯA TỒN TẠI → TẠO MỚI
-        // ===============================
-
-        const hashPassword = await bcrypt.hash(password, 10);
-
-        dbPromise.query(
-          "INSERT INTO students (full_name, email, password, phone, role, is_verified) VALUES (?, ?, ?, ?, ?, 0)",
-          [name, email, hashPassword, phone, "student"],
-          async (err, result) => {
-            if (err) return res.status(500).json({ message: "Lỗi tạo user" });
-
-            const otp = generateOTP();
-
-            dbPromise.query(
-              "INSERT INTO email_otps (student_id, otp, expired_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))",
-              [result.insertId, otp],
-              async (err) => {
-                if (err) return res.status(500).json({ message: "Lỗi OTP" });
-
-                await sendOtpMail(email, otp);
-
-                return res.json({
-                  message: "Đăng ký thành công. OTP đã gửi.",
-                  student_id: result.insertId,
-                  type: "REGISTER_SUCCESS"
-                });
-              }
-            );
-          }
-        );
       }
     );
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Lỗi server" });
+    console.error("REGISTER ERROR:", error);
+    return res.status(500).json({ message: "Lỗi server" });
   }
 });
-router.post("/verify-otp", (req, res) => {
-  console.log("📥 [VERIFY OTP] Body:", req.body);
 
+
+// ================== HÀM TẠO OTP ==================
+async function createAndSendOtp(studentId, email, res, type) {
+  const otp = generateOTP();
+  const otpHash = await bcrypt.hash(otp, 10);
+
+  dbPromise.query(
+    "DELETE FROM email_otps WHERE student_id = ?",
+    [studentId],
+    () => {
+      dbPromise.query(
+        `INSERT INTO email_otps
+         (student_id, otp_hash, expired_at, resend_count)
+         VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 1 MINUTE), 1)`,
+        [studentId, otpHash],
+        async (err) => {
+          if (err)
+            return res.status(500).json({ message: "Lỗi tạo OTP" });
+
+          await sendOtpMail(email, otp);
+
+          return res.json({
+            message: "OTP đã được gửi",
+            student_id: studentId,
+            type
+          });
+        }
+      );
+    }
+  );
+}
+router.post("/verify-otp", (req, res) => {
   const { student_id, otp } = req.body;
 
   if (!student_id || !otp) {
-    console.log("⚠️ Thiếu student_id hoặc otp");
-    return res.status(400).json({ message: "Thiếu dữ liệu xác thực" });
+    return res.status(400).json({ message: "Thiếu dữ liệu" });
   }
 
-  console.log(
-    `🔍 Kiểm tra OTP | student_id=${student_id} | otp=${otp}`
-  );
-
-  const sql = `
-    SELECT * FROM email_otps 
-    WHERE student_id = ? AND otp = ? AND expired_at > NOW()
-  `;
-
-  dbPromise.query(sql, [student_id, otp], (err, rows) => {
-    if (err) {
-      console.error("❌ Lỗi query kiểm tra OTP:", err);
-      return res.status(500).json({ message: "Lỗi server" });
-    }
-
-    if (rows.length === 0) {
-      console.log(
-        `⛔ OTP không hợp lệ hoặc hết hạn | student_id=${student_id}`
-      );
-      return res
-        .status(400)
-        .json({ message: "OTP không đúng hoặc đã hết hạn" });
-    }
-
-    console.log("✅ OTP hợp lệ, tiến hành xác thực email");
-
-    // cập nhật trạng thái xác thực
-    dbPromise.query(
-      "UPDATE students SET is_verified = 1 WHERE id = ?",
-      [student_id],
-      (err) => {
-        if (err) {
-          console.error("❌ Lỗi update is_verified:", err);
-          return res.status(500).json({ message: "Lỗi cập nhật xác thực" });
-        }
-
-        console.log(
-          "✅ Đã cập nhật is_verified = 1 cho student:",
-          student_id
-        );
-
-        // xoá OTP sau khi dùng
-        dbPromise.query(
-          "DELETE FROM email_otps WHERE student_id = ?",
-          [student_id],
-          (err) => {
-            if (err) {
-              console.error("⚠️ Lỗi xoá OTP (có thể bỏ qua):", err);
-            } else {
-              console.log(
-                "🧹 Đã xoá OTP cho student:",
-                student_id
-              );
-            }
-
-            res.json({ message: "Xác thực email thành công" });
-          }
-        );
+  dbPromise.query(
+    "SELECT * FROM email_otps WHERE student_id = ? ORDER BY created_at DESC LIMIT 1",
+    [student_id],
+    async (err, rows) => {
+      if (err) {
+        console.error("OTP QUERY ERROR:", err);
+        return res.status(500).json({ message: "Lỗi server" });
       }
-    );
-  });
-});
 
+      if (rows.length === 0) {
+        return res.status(400).json({ message: "OTP không tồn tại" });
+      }
+
+      const record = rows[0];
+
+      // 🔴 Kiểm tra hết hạn
+      if (new Date(record.expired_at) < new Date()) {
+        return res.status(400).json({ message: "OTP đã hết hạn" });
+      }
+
+      // 🔐 So sánh OTP
+      const isMatch = await bcrypt.compare(otp, record.otp_hash);
+
+      if (!isMatch) {
+        return res.status(400).json({ message: "OTP không đúng" });
+      }
+
+      // ✅ Cập nhật xác thực
+      dbPromise.query(
+        "UPDATE students SET is_verified = 1 WHERE id = ?",
+        [student_id],
+        (err) => {
+          if (err) {
+            console.error("VERIFY UPDATE ERROR:", err);
+            return res.status(500).json({ message: "Lỗi cập nhật user" });
+          }
+
+          // 🧹 Xóa OTP sau khi xác thực
+          dbPromise.query(
+            "DELETE FROM email_otps WHERE student_id = ?",
+            [student_id],
+            (err) => {
+              if (err) {
+                console.error("DELETE OTP ERROR:", err);
+                return res.status(500).json({ message: "Lỗi xóa OTP" });
+              }
+
+              return res.json({
+                message: "Xác thực thành công"
+              });
+            }
+          );
+        }
+      );
+    }
+  );
+});
 
 
 /* =======================
