@@ -18,6 +18,8 @@ const transporter = nodemailer.createTransport({
 
 // Lấy danh sách học viên
 router.get("/students", (req, res) => {
+  console.log('gọi ok');
+  
   // 1. Lấy và ép kiểu các tham số
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.max(1, parseInt(req.query.limit) || 6);
@@ -330,14 +332,15 @@ router.post(
       fee,
       start_date,
       platform,
+      meet_link
     } = req.body;
 
     const image = req.file ? req.file.filename : null;
 
     const sql = `
       INSERT INTO courses
-      (course_code, course_name, description, duration, fee, start_date, platform, image)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (course_code, course_name, description, duration, fee, start_date, platform, image,meet_link)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     db.query(
@@ -351,6 +354,7 @@ router.post(
         start_date,
         platform,
         image,
+        meet_link
       ],
       (err) => {
         if (err) {
@@ -387,6 +391,7 @@ router.put(
       start_date,
       platform,
       status, // Bổ sung status từ UI
+      meet_link
     } = req.body;
     console.log("call api sửa khóa học");
     
@@ -409,7 +414,8 @@ router.put(
             fee = ?, 
             start_date = ?, 
             platform = ?,
-            status = ?
+            status = ?,
+            meet_link = ?
       `;
 
       // Xử lý giá trị mặc định cho số để tránh lỗi SQL
@@ -421,7 +427,8 @@ router.put(
         fee || 0,      // Tránh null cho decimal
         start_date || null,
         platform,
-        status || 'Đang mở'
+        status || 'Đang mở',
+        meet_link 
       ];
 
       // 3. Nếu có ảnh mới -> thêm vào SQL và xóa ảnh cũ
@@ -534,81 +541,124 @@ router.delete("/courses/:id", (req, res) => {
 router.post("/enrollments", (req, res) => {
   const { student_id, course_id } = req.body;
 
-  // 1. Thực hiện Đăng ký vào Database trước
-  const sqlInsert = `INSERT INTO enrollments (student_id, course_id) VALUES (?, ?)`;
+  if (!student_id || !course_id) {
+    return res.status(400).json({ message: "Thiếu student_id hoặc course_id" });
+  }
+
+  console.log("gọi api enrollments", student_id, course_id);
+
+  const sqlInsert =
+    "INSERT INTO enrollments (student_id, course_id, paid_at,transaction_id) VALUES (?, ?, null,0)";
 
   db.query(sqlInsert, [student_id, course_id], (err, result) => {
     if (err) {
-      if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-        return res.status(409).json({ message: "Bạn đã đăng ký khóa học này rồi" });
+      console.error("INSERT ERROR:", err);
+
+      if (err.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message: "Bạn đã đăng ký khóa học này rồi",
+        });
       }
-      return res.status(500).json({ message: "Lỗi hệ thống", error: err });
+
+      return res.status(500).json({
+        message: "Lỗi hệ thống khi insert enrollments",
+        error: err.sqlMessage,
+      });
     }
 
-    // 2. Lấy thông tin chi tiết (Tên học viên, Tên khóa học, Học phí) để gửi mail
+    // ================= GET INFO =================
     const sqlGetInfo = `
-      SELECT s.full_name, s.email, s.phone, c.course_name, c.fee 
-      FROM students s, courses c 
-      WHERE s.id = ? AND c.id = ?
+      SELECT s.full_name, s.email, s.phone, c.course_name, c.fee
+      FROM students s
+      JOIN courses c ON c.id = ?
+      WHERE s.id = ?
     `;
 
-    db.query(sqlGetInfo, [student_id, course_id], (infoErr, infoResult) => {
-      if (infoErr || infoResult.length === 0) {
-        // Nếu lỗi lấy thông tin thì vẫn báo thành công đăng ký nhưng log lỗi mail
-        return res.json({ message: "Đăng ký thành công (Lỗi gửi mail thông báo)" });
+    db.query(sqlGetInfo, [course_id, student_id], (infoErr, infoResult) => {
+      if (infoErr) {
+        console.error("GET INFO ERROR:", infoErr);
+
+        return res.json({
+          message: "Đăng ký thành công nhưng lỗi lấy thông tin",
+        });
+      }
+
+      if (!infoResult || infoResult.length === 0) {
+        return res.json({
+          message: "Đăng ký thành công (không tìm thấy info)",
+        });
       }
 
       const info = infoResult[0];
 
-      // 3. Gửi Email với Template đẹp
+      // ================= EMAIL =================
       const mailOptions = {
-        from: '"DUC THANG MEDIA 🚀" <email-cua-ban@gmail.com>',
-        to: process.env.GMAIL_USER, // Email nhận thông báo
-        subject: `🔥 ĐĂNG KÝ MỚI: ${info.full_name.toUpperCase()} - ${info.course_name}`,
+        from: '"SYSTEM" <your-email@gmail.com>',
+        to: process.env.GMAIL_USER,
+        subject: `Đăng ký mới: ${info.full_name} - ${info.course_name}`,
         html: `
-          <div style="background-color: #0b0e14; padding: 40px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #ffffff;">
-            <div style="max-width: 600px; margin: 0 auto; background: #121821; border: 1px solid #1e2633; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-              
-              <div style="background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%); padding: 30px; text-align: center;">
-                <h1 style="margin: 0; font-size: 24px; color: #000; letter-spacing: 1px;">THÔNG BÁO ĐĂNG KÝ MỚI</h1>
-              </div>
+         <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+  
+  <div style="background-color: #1a73e8; padding: 20px; text-align: center;">
+    <h2 style="color: #ffffff; margin: 0; font-size: 22px; letter-spacing: 1px;">THÔNG BÁO ĐĂNG KÝ</h2>
+  </div>
 
-              <div style="padding: 30px;">
-                <p style="color: #888; font-size: 16px;">Chào Admin, hệ thống vừa ghi nhận một lượt đăng ký khóa học mới từ website.</p>
-                
-                <div style="background: rgba(255,255,255,0.03); border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255,255,255,0.05);">
-                  <h3 style="color: #4facfe; margin-top: 0; border-bottom: 1px solid #1e2633; padding-bottom: 10px;">👤 Thông tin học viên</h3>
-                  <p style="margin: 10px 0;"><strong>Họ và tên:</strong> ${info.full_name}</p>
-                  <p style="margin: 10px 0;"><strong>Email:</strong> ${info.email}</p>
-                  <p style="margin: 10px 0;"><strong>Số điện thoại:</strong> ${info.phone || 'Chưa cập nhật'}</p>
-                </div>
+  <div style="padding: 30px; background-color: #ffffff;">
+    <p style="color: #5f6368; font-size: 16px; margin-bottom: 25px;">
+      Hệ thống vừa ghi nhận một thông tin đăng ký mới với các chi tiết sau:
+    </p>
 
-                <div style="background: rgba(255,255,255,0.03); border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255,255,255,0.05);">
-                  <h3 style="color: #b388ff; margin-top: 0; border-bottom: 1px solid #1e2633; padding-bottom: 10px;">📚 Thông tin khóa học</h3>
-                  <p style="margin: 10px 0;"><strong>Tên khóa học:</strong> ${info.course_name}</p>
-                  <p style="margin: 10px 0;"><strong>Học phí:</strong> <span style="color: #ff4d4f; font-weight: bold;">${Number(info.fee).toLocaleString()}đ</span></p>
-                </div>
+    <table style="width: 100%; border-collapse: collapse; font-size: 15px;">
+      <tr>
+        <td style="padding: 12px 0; color: #80868b; width: 35%; border-bottom: 1px solid #f1f3f4;">Học viên:</td>
+        <td style="padding: 12px 0; color: #202124; font-weight: 600; border-bottom: 1px solid #f1f3f4;">
+          ${info.full_name}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; color: #80868b; border-bottom: 1px solid #f1f3f4;">Email:</td>
+        <td style="padding: 12px 0; color: #1a73e8; border-bottom: 1px solid #f1f3f4;">
+          ${info.email}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; color: #80868b; border-bottom: 1px solid #f1f3f4;">Khóa học:</td>
+        <td style="padding: 12px 0; color: #202124; font-weight: 600; border-bottom: 1px solid #f1f3f4;">
+          ${info.course_name}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; color: #80868b; border-bottom: 1px solid #f1f3f4;">Học phí:</td>
+        <td style="padding: 12px 0; color: #d93025; font-weight: bold; font-size: 18px; border-bottom: 1px solid #f1f3f4;">
+          ${Number(info.fee || 0).toLocaleString()}đ
+        </td>
+      </tr>
+    </table>
 
-                <div style="text-align: center; margin-top: 30px;">
-                  <a href="http://your-admin-url.com" style="background: #4facfe; color: #000; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">TRUY CẬP QUẢN TRỊ</a>
-                </div>
-              </div>
-
-              <div style="background: rgba(0,0,0,0.2); padding: 20px; text-align: center; font-size: 12px; color: #555;">
-                <p>Email này được gửi tự động từ hệ thống quản lý đào tạo <strong>DUC THANG MEDIA</strong>.</p>
-                <p>&copy; ${new Date().getFullYear()} Duc Thang Media. All rights reserved.</p>
-              </div>
-            </div>
-          </div>
-        `
+    <div style="margin-top: 30px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; text-align: center;">
+      <p style="margin: 0; font-size: 13px; color: #70757a;">
+        Vui lòng kiểm tra lại thông tin và xác nhận với học viên sớm nhất có thể.
+      </p>
+    </div>
+  </div>
+</div>
+        `,
       };
 
-      transporter.sendMail(mailOptions, (mailErr) => {
-        if (mailErr) console.error("Lỗi gửi mail:", mailErr);
-        else console.log("Đã gửi mail thông báo cho Admin");
-      });
+      // tránh crash nếu transporter lỗi
+      try {
+        transporter.sendMail(mailOptions, (mailErr) => {
+          if (mailErr) {
+            console.error("MAIL ERROR:", mailErr);
+          }
+        });
+      } catch (e) {
+        console.error("Transporter crash:", e);
+      }
 
-      res.json({ message: "Đăng ký khóa học thành công" });
+      return res.json({
+        message: "Đăng ký khóa học thành công",
+      });
     });
   });
 });
@@ -844,5 +894,446 @@ router.get("/students-by-course", (req, res) => {
     res.json(results);
   });
 });
+router.get("/attendance/report/:course_id", (req, res) => {
+  const sql = `
+    SELECT s.full_name, COUNT(a.id) as total
+    FROM students s
+    LEFT JOIN attendance a 
+      ON s.id = a.student_id 
+      AND a.course_id=?
+    GROUP BY s.id
+  `;
 
+  db.query(sql, [req.params.course_id], (err, result) => {
+    if (err) return res.status(500).json({ success: false });
+
+    res.json({ data: result });
+  });
+});
+
+/**
+ * Thanh toán
+ */
+// router.put("/students/:course_id/pay", (req, res) => {
+//   const courseId = req.params.course_id;
+//   const userId = req.body.user_id; // Lấy user_id từ body gửi lên
+
+//   console.log(`Đang thanh toán khóa học ${courseId} cho học viên ${userId}`);
+
+//   // Câu lệnh SQL kiểm tra cả 2 điều kiện để đảm bảo an toàn
+//   const sql = "UPDATE enrollments SET status='Đang học', paid_at=NOW() WHERE course_id=? AND student_id=?";
+
+//   db.query(sql, [courseId, userId], (err, result) => {
+//     if (err) {
+//       console.error("Lỗi MySQL:", err);
+//       return res.status(500).json({ message: "Lỗi server" });
+//     }
+
+//     if (result.affectedRows === 0) {
+//       return res.status(404).json({ message: "Không tìm thấy dữ liệu đăng ký phù hợp" });
+//     }
+
+//     res.json({ message: "Thanh toán thành công" });
+//   });
+// });
+
+router.post("/students/:course_id/momo", async (req, res) => {
+  const courseId = req.params.course_id;
+  const { user_id: userId } = req.body;
+  const amount = Math.round(Number(req.body.amount));
+
+  console.log("===== CREATE MOMO PAYMENT =====");
+  console.log("Course:", courseId);
+  console.log("User:", userId);
+  console.log("Amount:", amount);
+
+  try {
+    const crypto = require("crypto");
+    const https = require("https");
+
+    const partnerCode = "MOMO";
+    const accessKey = "F8BBA842ECF85";
+    const secretKey = "K951B6PE1waDMi640xX08PD3vg6EkVlz";
+
+    const requestId = partnerCode + new Date().getTime();
+    const orderId = requestId;
+    const orderInfo = `Thanh toán khóa học ${courseId}`;
+    const redirectUrl = "http://localhost:3000/payment-success";
+    const ipnUrl = "https://fc0c-1-53-53-166.ngrok-free.app/api/momo/ipn";
+    const requestType = "payWithATM"; // nhập STK ngân hàng
+    const extraData = `${courseId}|${userId}`;
+
+    // 🔥 Thứ tự bắt buộc đúng như MoMo yêu cầu
+    const rawSignature =
+      "accessKey=" + accessKey +
+      "&amount=" + amount +
+      "&extraData=" + extraData +
+      "&ipnUrl=" + ipnUrl +
+      "&orderId=" + orderId +
+      "&orderInfo=" + orderInfo +
+      "&partnerCode=" + partnerCode +
+      "&redirectUrl=" + redirectUrl +
+      "&requestId=" + requestId +
+      "&requestType=" + requestType;
+
+    console.log("RawSignature:", rawSignature);
+
+    const signature = crypto
+      .createHmac("sha256", secretKey)
+      .update(rawSignature)
+      .digest("hex");
+
+    console.log("Signature:", signature);
+
+    const requestBody = JSON.stringify({
+      partnerCode,
+      accessKey,
+      requestId,
+      amount: amount.toString(), // MoMo thích string
+      orderId,
+      orderInfo,
+      redirectUrl,
+      ipnUrl,
+      extraData,
+      requestType,
+      signature,
+      lang: "vi"
+    });
+
+    const options = {
+      hostname: "test-payment.momo.vn",
+      port: 443,
+      path: "/v2/gateway/api/create",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(requestBody)
+      }
+    };
+
+    const momoReq = https.request(options, momoRes => {
+      let data = "";
+
+      momoRes.on("data", chunk => {
+        data += chunk;
+      });
+
+      momoRes.on("end", () => {
+        const result = JSON.parse(data);
+        console.log("MoMo Response:", result);
+        res.json(result);
+      });
+    });
+
+    momoReq.on("error", (e) => {
+      console.error("MoMo Request Error:", e.message);
+      res.status(500).json({ message: "MoMo connection error" });
+    });
+
+    console.log("Sending to MoMo...");
+    momoReq.write(requestBody);
+    momoReq.end();
+
+  } catch (err) {
+    console.error("===== MOMO CREATE ERROR =====");
+    console.error(err);
+    res.status(500).json({
+      message: "Tạo thanh toán thất bại",
+      error: err.message,
+    });
+  }
+});
+router.post("/momo/ipn", async (req, res) => {
+  console.log("===== MOMO IPN RECEIVED =====");
+  console.log("IPN Body:", req.body);
+
+  try {
+    const crypto = require("crypto");
+
+    
+
+     const partnerCode = "MOMO";
+    const accessKey = "F8BBA842ECF85";
+    const secretKey = "K951B6PE1waDMi640xX08PD3vg6EkVlz";
+    const {
+      orderId,
+      requestId,
+      amount,
+      orderInfo,
+      orderType,
+      transId,
+      resultCode,
+      message,
+      payType,
+      responseTime,
+      extraData,
+      signature,
+    } = req.body;
+
+    const rawSignature =
+      `accessKey=${accessKey}` +
+      `&amount=${amount}` +
+      `&extraData=${extraData}` +
+      `&message=${message}` +
+      `&orderId=${orderId}` +
+      `&orderInfo=${orderInfo}` +
+      `&orderType=${orderType}` +
+      `&partnerCode=${partnerCode}` +
+      `&payType=${payType}` +
+      `&requestId=${requestId}` +
+      `&responseTime=${responseTime}` +
+      `&resultCode=${resultCode}` +
+      `&transId=${transId}`;
+
+    const checkSignature = crypto
+      .createHmac("sha256", secretKey)
+      .update(rawSignature)
+      .digest("hex");
+
+    console.log("IPN Signature:", signature);
+    console.log("Calculated Signature:", checkSignature);
+
+    if (signature !== checkSignature) {
+      console.error("❌ SIGNATURE KHÔNG HỢP LỆ");
+      return res.status(400).json({ message: "Invalid signature" });
+    }
+
+    console.log("✅ SIGNATURE HỢP LỆ");
+
+    if (Number(resultCode) === 0) {
+      const [courseId, userId] = extraData.split("|");
+
+      const sql = `
+        UPDATE enrollments 
+        SET status='Đang học',
+            paid_at=NOW(),
+                transaction_id=?
+
+        WHERE course_id=? AND student_id=?
+      `;
+
+      db.query(sql, [transId, courseId, userId], (err, result) => {
+        if (err) {
+          console.error("❌ Lỗi MySQL:", err);
+        } else {
+          console.log("✅ Update thành công:", result);
+        }
+      });
+
+    } else {
+      console.log("❌ Thanh toán thất bại:", resultCode);
+    }
+
+    res.status(200).json({ message: "OK" });
+
+  } catch (err) {
+    console.error("===== IPN ERROR =====");
+    console.error(err);
+    res.status(500).json({ message: "Error" });
+  }
+});
+
+router.post("/attendance", (req, res) => {
+  const { student_id, course_id } = req.body;
+
+  // 1. check đã điểm danh chưa
+  const checkSql =
+    "SELECT * FROM attendance WHERE student_id=? AND course_id=?";
+
+  db.query(checkSql, [student_id, course_id], (err, result) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi server khi kiểm tra điểm danh",
+      });
+    }
+
+    // nếu đã tồn tại
+    if (result.length > 0) {
+      return res.json({
+        success: false,
+        message: "Bạn đã điểm danh rồi",
+      });
+    }
+
+    // 2. insert attendance
+    const insertSql =
+      "INSERT INTO attendance (student_id, course_id) VALUES (?,?)";
+
+    db.query(insertSql, [student_id, course_id], (err2) => {
+      if (err2) {
+        console.error(err2);
+        return res.status(500).json({
+          success: false,
+          message: "Lỗi server khi điểm danh",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Điểm danh thành công",
+        meetLink: "https://meet.google.com/abc-defg-hij",
+      });
+    });
+  });
+});
+router.get("/attendance/check", (req, res) => {
+  const { student_id, course_id } = req.query;
+
+  const sql =
+    "SELECT * FROM attendance WHERE student_id=? AND course_id=? AND DATE(created_at)=CURDATE() LIMIT 1";
+
+  db.query(sql, [student_id, course_id], (err, result) => {
+    if (err) return res.status(500).json({ success: false });
+
+    if (result.length > 0) {
+      return res.json({
+        isAttended: true,
+        meetLink: "https://meet.google.com/abc-defg-hij",
+      });
+    }
+
+    return res.json({
+      isAttended: false,
+    });
+  });
+});
+  router.get("/attendance/list", (req, res) => {
+   const sql = `
+    SELECT 
+      c.id AS course_id,
+      c.course_name,
+      c.meet_link,
+
+      COUNT(a.id) AS total_attendance,
+
+      CASE 
+        WHEN COUNT(a.id) > 0 THEN 'Đã điểm danh'
+        ELSE 'Chưa có điểm danh'
+      END AS status
+
+    FROM courses c
+    LEFT JOIN attendance a ON a.course_id = c.id
+    GROUP BY c.id, c.course_name, c.meet_link
+    ORDER BY c.id DESC
+  `;
+
+  db.query(sql, (err, result) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ data: result });
+  });
+  });
+router.get("/attendance/course/:course_id", (req, res) => {
+  const { course_id } = req.params;
+
+  const sql = `
+    SELECT 
+      a.id,
+      a.created_at,
+      s.full_name,
+      s.email,
+      c.course_name
+    FROM attendance a
+    JOIN students s ON a.student_id = s.id
+    JOIN courses c ON a.course_id = c.id
+    WHERE a.course_id = ?
+    ORDER BY a.created_at DESC
+  `;
+
+  db.query(sql, [course_id], (err, result) => {
+    if (err) return res.status(500).json({ success: false });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  });
+});
+router.post("/courses/:id/send-notify", async (req, res) => {
+  const courseId = req.params.id;
+
+  try {
+    // 1. Lấy thông tin lớp
+    const [course] = await db.promise().query(
+      "SELECT * FROM courses WHERE id = ?",
+      [courseId]
+    );
+
+    if (!course.length) {
+      return res.status(404).json({ message: "Không tìm thấy lớp" });
+    }
+
+    const classInfo = course[0];
+
+    // 2. Lấy danh sách học viên
+    const [students] = await db.promise().query(
+      `SELECT s.email, s.full_name
+       FROM enrollments e
+       JOIN students s ON e.student_id = s.id
+       WHERE e.course_id = ?`,
+      [courseId]
+    );
+
+    if (!students.length) {
+      return res.status(400).json({ message: "Lớp chưa có học viên" });
+    }
+    console.log(classInfo);
+    
+    // 3. Gửi mail hàng loạt (tối ưu hơn loop thường)
+    await Promise.all(
+      students.map((st) =>
+        transporter.sendMail({
+          from: process.env.GMAIL_USER,
+          to: st.email,
+          subject: `📢 Thông báo vào lớp: ${classInfo.course_name}`,
+          html: `
+           <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 20px auto; padding: 30px; border-radius: 15px; background-color: #ffffff; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #eee;">
+  
+  <h2 style="color: #2d3436; margin-top: 0; font-size: 24px;">
+    Xin chào, <span style="color: #0984e3;">${st.full_name}</span> 👋
+  </h2>
+  
+  <p style="color: #636e72; line-height: 1.6; font-size: 16px;">
+    Lớp học <strong style="color: #2d3436;">${classInfo.course_name}</strong> của bạn đã sẵn sàng để bắt đầu. Đừng bỏ lỡ những kiến thức thú vị hôm nay nhé!
+  </p>
+
+  <div style="text-align: center; margin: 30px 0;">
+    <a href="${classInfo.meet_link}" 
+       target="_blank" 
+       style="background-color: #00b894; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; transition: background-color 0.3s ease;">
+      Vào lớp học ngay
+    </a>
+  </div>
+
+  <div style="background-color: #f9f9f9; border-left: 4px solid #00b894; padding: 15px; margin-bottom: 20px;">
+    <p style="margin: 0; font-size: 14px; color: #636e72;">
+      <strong>Link dự phòng:</strong><br/>
+      <a href="${classInfo.meet_link}" style="color: #0984e3; text-decoration: none; word-break: break-all;">
+        ${classInfo.meet_link || "Chưa có link"}
+      </a>
+    </p>
+  </div>
+
+  <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+
+  <p style="color: #b2bec3; font-size: 13px; text-align: center; font-style: italic;">
+    Vui lòng có mặt đúng giờ để lớp học diễn ra tốt đẹp nhất.
+  </p>
+</div>
+          `,
+        })
+      )
+    );
+
+    return res.json({
+      success: true,
+      message: `Đã gửi email cho ${students.length} học viên`,
+    });
+
+  } catch (err) {
+    console.log("SEND MAIL ERROR:", err);
+    return res.status(500).json({ message: "Lỗi server gửi mail" });
+  }
+});
 module.exports = router;
