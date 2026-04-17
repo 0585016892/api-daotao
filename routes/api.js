@@ -959,10 +959,11 @@ router.post("/students/:course_id/momo", async (req, res) => {
     const orderId = requestId;
     const orderInfo = `Thanh toán khóa học ${courseId}`;
     const redirectUrl = "http://localhost:3000/payment-success";
-    const ipnUrl = "https://fc0c-1-53-53-166.ngrok-free.app/api/momo/ipn";
+    const ipnUrl = `${process.env.NGROK_API}/api/momo/ipn`;
     const requestType = "payWithATM"; // nhập STK ngân hàng
     const extraData = `${courseId}|${userId}`;
 
+    
     // 🔥 Thứ tự bắt buộc đúng như MoMo yêu cầu
     const rawSignature =
       "accessKey=" + accessKey +
@@ -1136,9 +1137,12 @@ router.post("/momo/ipn", async (req, res) => {
 router.post("/attendance", (req, res) => {
   const { student_id, course_id } = req.body;
 
-  // 1. check đã điểm danh chưa
-  const checkSql =
-    "SELECT * FROM attendance WHERE student_id=? AND course_id=?";
+  const checkSql = `
+    SELECT * FROM attendance 
+    WHERE student_id = ? 
+    AND course_id = ?
+    AND DATE(created_at) = CURDATE()
+  `;
 
   db.query(checkSql, [student_id, course_id], (err, result) => {
     if (err) {
@@ -1149,15 +1153,14 @@ router.post("/attendance", (req, res) => {
       });
     }
 
-    // nếu đã tồn tại
+    // Nếu đã điểm danh hôm nay
     if (result.length > 0) {
       return res.json({
         success: false,
-        message: "Bạn đã điểm danh rồi",
+        message: "Hôm nay bạn đã điểm danh rồi",
       });
     }
 
-    // 2. insert attendance
     const insertSql =
       "INSERT INTO attendance (student_id, course_id) VALUES (?,?)";
 
@@ -1172,7 +1175,7 @@ router.post("/attendance", (req, res) => {
 
       return res.json({
         success: true,
-        message: "Điểm danh thành công",
+        message: "Điểm danh hôm nay thành công",
         meetLink: "https://meet.google.com/abc-defg-hij",
       });
     });
