@@ -250,57 +250,72 @@ router.get("/courses", (req, res) => {
   const limit = parseInt(req.query.limit) || 5;
   const offset = (page - 1) * limit;
 
-  const { keyword, platform, sort , status} = req.query;
-  console.log(req.query
-  );
-  
+  const { keyword, platform, sort, status } = req.query;
+
   let where = "WHERE 1=1";
   let params = [];
 
   // ===== SEARCH =====
   if (keyword) {
-    where += " AND course_name LIKE ?";
+    where += " AND c.course_name LIKE ?";
     params.push(`%${keyword}%`);
   }
 
+  // ===== STATUS =====
   if (status) {
-    where += " AND status = ?";
+    where += " AND c.status = ?";
     params.push(status);
   }
-  // ===== PLATFORM FILTER =====
+
+  // ===== PLATFORM =====
   if (platform) {
-    where += " AND platform = ?";
+    where += " AND c.platform = ?";
     params.push(platform);
   }
 
   // ===== SORT =====
-  let orderBy = "ORDER BY id DESC";
-  if (sort === "price_asc") orderBy = "ORDER BY fee ASC";
-  if (sort === "price_desc") orderBy = "ORDER BY fee DESC";
-  if (sort === "newest") orderBy = "ORDER BY start_date DESC";
+  let orderBy = "ORDER BY c.id DESC";
+  if (sort === "price_asc") orderBy = "ORDER BY c.fee ASC";
+  if (sort === "price_desc") orderBy = "ORDER BY c.fee DESC";
+  if (sort === "newest") orderBy = "ORDER BY c.start_date DESC";
 
-  // ===== SQL =====
+  // =======================
+  // 📌 DATA QUERY (JOIN teacher)
+  // =======================
   const sqlData = `
-    SELECT *
-    FROM courses
+    SELECT 
+      c.*,
+
+      t.id AS teacher_id,
+      t.full_name AS teacher_name,
+      t.email AS teacher_email,
+      t.phone AS teacher_phone
+
+    FROM courses c
+    LEFT JOIN teachers t ON c.teacher_id = t.id
     ${where}
     ${orderBy}
     LIMIT ? OFFSET ?
   `;
 
+  // =======================
+  // 📌 COUNT QUERY
+  // =======================
   const sqlCount = `
     SELECT COUNT(*) AS total
-    FROM courses
+    FROM courses c
+    LEFT JOIN teachers t ON c.teacher_id = t.id
     ${where}
   `;
 
-  // ===== COUNT =====
+  // =======================
+  // 📌 EXEC
+  // =======================
   db.query(sqlCount, params, (err, countResult) => {
     if (err) return res.status(500).json(err);
 
     const total = countResult[0].total;
 
-    // ===== DATA =====
     db.query(
       sqlData,
       [...params, limit, offset],
@@ -538,6 +553,25 @@ router.delete("/courses/:id", (req, res) => {
 ========================= */
 
 // Đăng ký học viên vào khóa học
+router.put("/courses/:id/assign-teacher", async (req, res) => {
+  try {
+    const { teacher_id } = req.body;
+
+    await db.queryAsync(
+      "UPDATE courses SET teacher_id = ? WHERE id = ?",
+      [teacher_id, req.params.id]
+    );
+
+    res.json({
+      message: "Gán giảng viên vào lớp thành công",
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Lỗi server",
+      error: err,
+    });
+  }
+});
 router.post("/enrollments", (req, res) => {
   const { student_id, course_id } = req.body;
 
@@ -958,7 +992,7 @@ router.post("/students/:course_id/momo", async (req, res) => {
     const requestId = partnerCode + new Date().getTime();
     const orderId = requestId;
     const orderInfo = `Thanh toán khóa học ${courseId}`;
-    const redirectUrl = "http://localhost:3000/payment-success";
+    const redirectUrl = "http://localhost:3001/payment-success";
     const ipnUrl = `${process.env.NGROK_API}/api/momo/ipn`;
     const requestType = "payWithATM"; // nhập STK ngân hàng
     const extraData = `${courseId}|${userId}`;
@@ -1162,7 +1196,7 @@ router.post("/attendance", (req, res) => {
     }
 
     const insertSql =
-      "INSERT INTO attendance (student_id, course_id) VALUES (?,?)";
+      "INSERT INTO attendance (student_id, course_id,attendance_date) VALUES (?,?, CURDATE())";
 
     db.query(insertSql, [student_id, course_id], (err2) => {
       if (err2) {

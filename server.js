@@ -10,6 +10,9 @@ const authRoutes = require("./routes/auth.routes");
 const dashboardRoutes = require("./routes/dashboard");
 const settingRoutes = require("./routes/settingRoutes");
 const chatbotRoutes = require("./routes/chatbot");
+const teacherRoutes = require("./routes/teacherRoutes");
+const certificateRoutes = require("./routes/certificateRoutes");
+const templatesRoutes = require("./routes/template.routes");
 
 
 const app = express();
@@ -26,8 +29,9 @@ app.use("/api/user", authRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/chatbot", chatbotRoutes);
-
-
+app.use("/api/teachers", teacherRoutes);
+app.use("/api/certificates", certificateRoutes);
+app.use("/api/templates", templatesRoutes);
 // Test server
 app.get("/", (req, res) => {
   res.send("🚀 API Quản lý đào tạo đang chạy");
