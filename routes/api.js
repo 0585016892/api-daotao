@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require("../mysql/db");
 const uploadCourseImage = require("../middleware/upload.js");
 const nodemailer = require("nodemailer");
+const { log } = require("console");
 
 // 1. Cấu hình transporter (Dùng Gmail làm ví dụ)
 const transporter = nodemailer.createTransport({
@@ -18,8 +19,8 @@ const transporter = nodemailer.createTransport({
 
 // Lấy danh sách học viên
 router.get("/students", (req, res) => {
-  console.log('gọi ok');
-  
+  console.log("gọi ok");
+
   // 1. Lấy và ép kiểu các tham số
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.max(1, parseInt(req.query.limit) || 6);
@@ -55,7 +56,7 @@ router.get("/students", (req, res) => {
         page,
         limit,
         total,
-        data: results
+        data: results,
       });
     });
   });
@@ -63,8 +64,16 @@ router.get("/students", (req, res) => {
 
 // Thêm học viên
 router.post("/students", (req, res) => {
-  const { student_code, full_name, gender, phone, email, address ,date_of_birth} = req.body;
-    
+  const {
+    student_code,
+    full_name,
+    gender,
+    phone,
+    email,
+    address,
+    date_of_birth,
+  } = req.body;
+
   const sql = `
     INSERT INTO students (student_code, full_name, gender, phone, email, address,date_of_birth)
     VALUES (?, ?, ?, ?, ?, ?,?)
@@ -72,11 +81,11 @@ router.post("/students", (req, res) => {
 
   db.query(
     sql,
-    [student_code, full_name, gender, phone, email, address ,date_of_birth],
+    [student_code, full_name, gender, phone, email, address, date_of_birth],
     (err) => {
       if (err) return res.status(500).json(err);
       res.json({ message: "Thêm học viên thành công" });
-    }
+    },
   );
 });
 
@@ -98,13 +107,13 @@ router.put("/students/:id", (req, res) => {
 
   // Danh sách các cột cho phép cập nhật
   const allowedColumns = [
-    "student_code", 
-    "full_name", 
-    "gender", 
-    "phone", 
-    "email", 
-    "address", 
-    "date_of_birth"
+    "student_code",
+    "full_name",
+    "gender",
+    "phone",
+    "email",
+    "address",
+    "date_of_birth",
   ];
 
   allowedColumns.forEach((col) => {
@@ -117,7 +126,9 @@ router.put("/students/:id", (req, res) => {
 
   // 2. Kiểm tra nếu không có trường nào để cập nhật
   if (fields.length === 0) {
-    return res.status(400).json({ message: "Không có thông tin nào để thay đổi" });
+    return res
+      .status(400)
+      .json({ message: "Không có thông tin nào để thay đổi" });
   }
 
   // 3. Thêm ID vào cuối mảng giá trị cho điều kiện WHERE
@@ -131,7 +142,7 @@ router.put("/students/:id", (req, res) => {
       console.error("Update error:", err);
       return res.status(500).json({ message: "Lỗi hệ thống", error: err });
     }
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Không tìm thấy học viên" });
     }
@@ -216,10 +227,7 @@ router.put("/students/:id/change-password", (req, res) => {
       const currentHashedPassword = results[0].password;
 
       // 2️⃣ So sánh mật khẩu cũ
-      const isMatch = await bcrypt.compare(
-        old_password,
-        currentHashedPassword
-      );
+      const isMatch = await bcrypt.compare(old_password, currentHashedPassword);
 
       if (!isMatch) {
         return res.status(400).json({ message: "Mật khẩu cũ không đúng" });
@@ -235,9 +243,9 @@ router.put("/students/:id/change-password", (req, res) => {
         (err) => {
           if (err) return res.status(500).json(err);
           res.json({ message: "Đổi mật khẩu thành công" });
-        }
+        },
       );
-    }
+    },
   );
 });
 /* =========================
@@ -316,88 +324,44 @@ router.get("/courses", (req, res) => {
 
     const total = countResult[0].total;
 
-    db.query(
-      sqlData,
-      [...params, limit, offset],
-      (err, results) => {
-        if (err) return res.status(500).json(err);
+    db.query(sqlData, [...params, limit, offset], (err, results) => {
+      if (err) return res.status(500).json(err);
 
-        res.json({
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-          data: results,
-        });
-      }
-    );
+      res.json({
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        data: results,
+      });
+    });
   });
 });
 
 // Thêm khóa học
-router.post(
-  "/courses",
-  uploadCourseImage.single("image"),
-  (req, res) => {
-    const {
-      course_code,
-      course_name,
-      description,
-      duration,
-      fee,
-      start_date,
-      platform,
-      meet_link
-    } = req.body;
+router.post("/courses", uploadCourseImage.single("image"), (req, res) => {
+  const {
+    course_code,
+    course_name,
+    description,
+    duration,
+    fee,
+    start_date,
+    platform,
+    meet_link,
+  } = req.body;
 
-    const image = req.file ? req.file.filename : null;
+  const image = req.file ? req.file.filename : null;
 
-    const sql = `
+  const sql = `
       INSERT INTO courses
       (course_code, course_name, description, duration, fee, start_date, platform, image,meet_link)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    db.query(
-      sql,
-      [
-        course_code,
-        course_name,
-        description,
-        duration,
-        fee,
-        start_date,
-        platform,
-        image,
-        meet_link
-      ],
-      (err) => {
-        if (err) {
-          // 🔴 Nếu trùng course_code
-          if (err.code === "ER_DUP_ENTRY") {
-            return res.status(400).json({
-              message: "Mã khóa học đã tồn tại",
-            });
-          }
-
-          console.error(err);
-          return res.status(500).json({
-            message: "Lỗi server",
-          });
-        }
-
-        res.json({ message: "Thêm khóa học thành công" });
-      }
-    );
-  }
-);
-// Cập nhật khóa học
-router.put(
-  "/courses/:id",
-  uploadCourseImage.single("image"),
-  (req, res) => {
-    const courseId = req.params.id;
-    const {
+  db.query(
+    sql,
+    [
       course_code,
       course_name,
       description,
@@ -405,17 +369,54 @@ router.put(
       fee,
       start_date,
       platform,
-      status, // Bổ sung status từ UI
-      meet_link
-    } = req.body;
-    console.log("call api sửa khóa học");
-    
-    const newImage = req.file ? req.file.filename : null;
+      image,
+      meet_link,
+    ],
+    (err) => {
+      if (err) {
+        // 🔴 Nếu trùng course_code
+        if (err.code === "ER_DUP_ENTRY") {
+          return res.status(400).json({
+            message: "Mã khóa học đã tồn tại",
+          });
+        }
 
-    // 1. Lấy thông tin ảnh cũ trước khi Update (Để xóa file vật lý)
-    db.query("SELECT image FROM courses WHERE id = ?", [courseId], (err, results) => {
+        console.error(err);
+        return res.status(500).json({
+          message: "Lỗi server",
+        });
+      }
+
+      res.json({ message: "Thêm khóa học thành công" });
+    },
+  );
+});
+// Cập nhật khóa học
+router.put("/courses/:id", uploadCourseImage.single("image"), (req, res) => {
+  const courseId = req.params.id;
+  const {
+    course_code,
+    course_name,
+    description,
+    duration,
+    fee,
+    start_date,
+    platform,
+    status, // Bổ sung status từ UI
+    meet_link,
+  } = req.body;
+  console.log("call api sửa khóa học");
+
+  const newImage = req.file ? req.file.filename : null;
+
+  // 1. Lấy thông tin ảnh cũ trước khi Update (Để xóa file vật lý)
+  db.query(
+    "SELECT image FROM courses WHERE id = ?",
+    [courseId],
+    (err, results) => {
       if (err) return res.status(500).json(err);
-      if (results.length === 0) return res.status(404).json({ message: "Không tìm thấy khóa học" });
+      if (results.length === 0)
+        return res.status(404).json({ message: "Không tìm thấy khóa học" });
 
       const oldImage = results[0].image;
 
@@ -439,11 +440,11 @@ router.put(
         course_name,
         description,
         duration || 0, // Tránh null cho int
-        fee || 0,      // Tránh null cho decimal
+        fee || 0, // Tránh null cho decimal
         start_date || null,
         platform,
-        status || 'Đang mở',
-        meet_link 
+        status || "Đang mở",
+        meet_link,
       ];
 
       // 3. Nếu có ảnh mới -> thêm vào SQL và xóa ảnh cũ
@@ -453,7 +454,7 @@ router.put(
 
         // Xóa file ảnh cũ khỏi thư mục (nếu có)
         if (oldImage) {
-          const oldPath = path.join(__dirname, '../uploads/courses/', oldImage);
+          const oldPath = path.join(__dirname, "../uploads/courses/", oldImage);
           if (fs.existsSync(oldPath)) {
             fs.unlinkSync(oldPath); // Xóa file
           }
@@ -469,11 +470,14 @@ router.put(
           console.error("UPDATE COURSE ERROR:", updateErr);
           return res.status(500).json(updateErr);
         }
-        res.json({ message: "Cập nhật khóa học thành công", image: newImage || oldImage });
+        res.json({
+          message: "Cập nhật khóa học thành công",
+          image: newImage || oldImage,
+        });
       });
-    });
-  }
-);
+    },
+  );
+});
 // Tìm kiếm khóa học
 router.get("/courses/search", (req, res) => {
   const keyword = `%${req.query.q || ""}%`;
@@ -557,10 +561,10 @@ router.put("/courses/:id/assign-teacher", async (req, res) => {
   try {
     const { teacher_id } = req.body;
 
-    await db.queryAsync(
-      "UPDATE courses SET teacher_id = ? WHERE id = ?",
-      [teacher_id, req.params.id]
-    );
+    await db.queryAsync("UPDATE courses SET teacher_id = ? WHERE id = ?", [
+      teacher_id,
+      req.params.id,
+    ]);
 
     res.json({
       message: "Gán giảng viên vào lớp thành công",
@@ -720,12 +724,7 @@ router.get("/enrollments", (req, res) => {
         OR c.course_name LIKE ?
       )
     `;
-    params.push(
-      `%${keyword}%`,
-      `%${keyword}%`,
-      `%${keyword}%`,
-      `%${keyword}%`
-    );
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
 
   const sqlData = `
@@ -779,21 +778,17 @@ router.get("/enrollments", (req, res) => {
 
     const total = countResult[0].total;
 
-    db.query(
-      sqlData,
-      [...params, limit, offset],
-      (err, results) => {
-        if (err) return res.status(500).json(err);
+    db.query(sqlData, [...params, limit, offset], (err, results) => {
+      if (err) return res.status(500).json(err);
 
-        res.json({
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-          data: results,
-        });
-      }
-    );
+      res.json({
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        data: results,
+      });
+    });
   });
 });
 router.patch("/enrollments/:id/status", (req, res) => {
@@ -804,7 +799,7 @@ router.patch("/enrollments/:id/status", (req, res) => {
     "Chờ xác nhận": 1,
     "Đang học": 2,
     "Hoàn thành": 3,
-    "Hủy": 0,
+    Hủy: 0,
   };
 
   // 1. Kiểm tra trạng thái hiện tại (Dùng Callback)
@@ -814,11 +809,15 @@ router.patch("/enrollments/:id/status", (req, res) => {
     (err, results) => {
       if (err) {
         console.error("Lỗi truy vấn:", err);
-        return res.status(500).json({ success: false, message: "Lỗi cơ sở dữ liệu" });
+        return res
+          .status(500)
+          .json({ success: false, message: "Lỗi cơ sở dữ liệu" });
       }
 
       if (!results || results.length === 0) {
-        return res.status(404).json({ success: false, message: "Không tìm thấy bản ghi" });
+        return res
+          .status(404)
+          .json({ success: false, message: "Không tìm thấy bản ghi" });
       }
 
       const currentStatus = results[0].status;
@@ -836,7 +835,8 @@ router.patch("/enrollments/:id/status", (req, res) => {
       if (newStatus !== "Hủy" && nextLevel <= currentLevel) {
         return res.status(400).json({
           success: false,
-          message: "Quy trình chỉ cho phép nâng cấp trạng thái, không thể quay lại.",
+          message:
+            "Quy trình chỉ cho phép nâng cấp trạng thái, không thể quay lại.",
         });
       }
 
@@ -847,22 +847,23 @@ router.patch("/enrollments/:id/status", (req, res) => {
         (updateErr, updateResults) => {
           if (updateErr) {
             console.error("Lỗi cập nhật:", updateErr);
-            return res.status(500).json({ success: false, message: "Cập nhật thất bại" });
+            return res
+              .status(500)
+              .json({ success: false, message: "Cập nhật thất bại" });
           }
 
           return res.status(200).json({
             success: true,
             message: "Cập nhật trạng thái thành công!",
           });
-        }
+        },
       );
-    }
+    },
   );
 });
 /* =========================
    THỐNG KÊ – BÁO CÁO
 ========================= */
-
 
 // 1. Doanh thu theo từng khóa học (Dành cho biểu đồ cột)
 router.get("/revenue-by-course", (req, res) => {
@@ -997,19 +998,28 @@ router.post("/students/:course_id/momo", async (req, res) => {
     const requestType = "payWithATM"; // nhập STK ngân hàng
     const extraData = `${courseId}|${userId}`;
 
-    
     // 🔥 Thứ tự bắt buộc đúng như MoMo yêu cầu
     const rawSignature =
-      "accessKey=" + accessKey +
-      "&amount=" + amount +
-      "&extraData=" + extraData +
-      "&ipnUrl=" + ipnUrl +
-      "&orderId=" + orderId +
-      "&orderInfo=" + orderInfo +
-      "&partnerCode=" + partnerCode +
-      "&redirectUrl=" + redirectUrl +
-      "&requestId=" + requestId +
-      "&requestType=" + requestType;
+      "accessKey=" +
+      accessKey +
+      "&amount=" +
+      amount +
+      "&extraData=" +
+      extraData +
+      "&ipnUrl=" +
+      ipnUrl +
+      "&orderId=" +
+      orderId +
+      "&orderInfo=" +
+      orderInfo +
+      "&partnerCode=" +
+      partnerCode +
+      "&redirectUrl=" +
+      redirectUrl +
+      "&requestId=" +
+      requestId +
+      "&requestType=" +
+      requestType;
 
     console.log("RawSignature:", rawSignature);
 
@@ -1032,7 +1042,7 @@ router.post("/students/:course_id/momo", async (req, res) => {
       extraData,
       requestType,
       signature,
-      lang: "vi"
+      lang: "vi",
     });
 
     const options = {
@@ -1042,14 +1052,14 @@ router.post("/students/:course_id/momo", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(requestBody)
-      }
+        "Content-Length": Buffer.byteLength(requestBody),
+      },
     };
 
-    const momoReq = https.request(options, momoRes => {
+    const momoReq = https.request(options, (momoRes) => {
       let data = "";
 
-      momoRes.on("data", chunk => {
+      momoRes.on("data", (chunk) => {
         data += chunk;
       });
 
@@ -1068,7 +1078,6 @@ router.post("/students/:course_id/momo", async (req, res) => {
     console.log("Sending to MoMo...");
     momoReq.write(requestBody);
     momoReq.end();
-
   } catch (err) {
     console.error("===== MOMO CREATE ERROR =====");
     console.error(err);
@@ -1085,9 +1094,7 @@ router.post("/momo/ipn", async (req, res) => {
   try {
     const crypto = require("crypto");
 
-    
-
-     const partnerCode = "MOMO";
+    const partnerCode = "MOMO";
     const accessKey = "F8BBA842ECF85";
     const secretKey = "K951B6PE1waDMi640xX08PD3vg6EkVlz";
     const {
@@ -1154,13 +1161,11 @@ router.post("/momo/ipn", async (req, res) => {
           console.log("✅ Update thành công:", result);
         }
       });
-
     } else {
       console.log("❌ Thanh toán thất bại:", resultCode);
     }
 
     res.status(200).json({ message: "OK" });
-
   } catch (err) {
     console.error("===== IPN ERROR =====");
     console.error(err);
@@ -1218,8 +1223,15 @@ router.post("/attendance", (req, res) => {
 router.get("/attendance/check", (req, res) => {
   const { student_id, course_id } = req.query;
 
-  const sql =
-    "SELECT * FROM attendance WHERE student_id=? AND course_id=? AND DATE(created_at)=CURDATE() LIMIT 1";
+  const sql = `
+    SELECT a.*, c.meet_link
+    FROM attendance a
+    JOIN courses c ON a.course_id = c.id
+    WHERE a.student_id = ?
+      AND a.course_id = ?
+      AND DATE(a.created_at) = CURDATE()
+    LIMIT 1
+  `;
 
   db.query(sql, [student_id, course_id], (err, result) => {
     if (err) return res.status(500).json({ success: false });
@@ -1227,7 +1239,7 @@ router.get("/attendance/check", (req, res) => {
     if (result.length > 0) {
       return res.json({
         isAttended: true,
-        meetLink: "https://meet.google.com/abc-defg-hij",
+        meetLink: result[0].meet_link,
       });
     }
 
@@ -1236,8 +1248,8 @@ router.get("/attendance/check", (req, res) => {
     });
   });
 });
-  router.get("/attendance/list", (req, res) => {
-   const sql = `
+router.get("/attendance/list", (req, res) => {
+  const sql = `
     SELECT 
       c.id AS course_id,
       c.course_name,
@@ -1260,7 +1272,7 @@ router.get("/attendance/check", (req, res) => {
     if (err) return res.status(500).json({ success: false });
     res.json({ data: result });
   });
-  });
+});
 router.get("/attendance/course/:course_id", (req, res) => {
   const { course_id } = req.params;
 
@@ -1292,10 +1304,9 @@ router.post("/courses/:id/send-notify", async (req, res) => {
 
   try {
     // 1. Lấy thông tin lớp
-    const [course] = await db.promise().query(
-      "SELECT * FROM courses WHERE id = ?",
-      [courseId]
-    );
+    const [course] = await db
+      .promise()
+      .query("SELECT * FROM courses WHERE id = ?", [courseId]);
 
     if (!course.length) {
       return res.status(404).json({ message: "Không tìm thấy lớp" });
@@ -1309,14 +1320,14 @@ router.post("/courses/:id/send-notify", async (req, res) => {
        FROM enrollments e
        JOIN students s ON e.student_id = s.id
        WHERE e.course_id = ?`,
-      [courseId]
+      [courseId],
     );
 
     if (!students.length) {
       return res.status(400).json({ message: "Lớp chưa có học viên" });
     }
     console.log(classInfo);
-    
+
     // 3. Gửi mail hàng loạt (tối ưu hơn loop thường)
     await Promise.all(
       students.map((st) =>
@@ -1359,15 +1370,14 @@ router.post("/courses/:id/send-notify", async (req, res) => {
   </p>
 </div>
           `,
-        })
-      )
+        }),
+      ),
     );
 
     return res.json({
       success: true,
       message: `Đã gửi email cho ${students.length} học viên`,
     });
-
   } catch (err) {
     console.log("SEND MAIL ERROR:", err);
     return res.status(500).json({ message: "Lỗi server gửi mail" });
